@@ -60,13 +60,9 @@ class LoginForm(npyscreen.ActionForm):
     def fetch_user(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ?", (self.username.value.lower(),))
 
         user = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
 
         if not user:
             raise ValueError("Invalid credentials")
@@ -76,12 +72,8 @@ class LoginForm(npyscreen.ActionForm):
     def fetch_login_attempts(self):
         user = self.fetch_user()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ?", (self.username.value.lower(),))
         attempts = cursor.fetchone()[9]
-
-        cursor.close()
-        conn.close()
 
         return attempts
 
@@ -96,11 +88,8 @@ class LoginForm(npyscreen.ActionForm):
         if not bcrypt.checkpw(self.password.value.encode('utf-8'), user[2].encode('utf8')):
             attempts = int(self.fetch_login_attempts()) + 1
 
-            conn, cursor = connect_db()
             cursor.execute("UPDATE users SET failed_attempts = ? WHERE id = ?", (attempts, user[0]))
             conn.commit()
-            cursor.close()
-            conn.close()
 
             log_line = f"{current_date}, {current_time}, {user[1]}, Failed login,  , {suspicious}"
             Logger.log(log_line)
@@ -238,12 +227,8 @@ class AddMemberForm(npyscreen.ActionForm):
     def add_member(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM members WHERE first_name = ? and last_name = ?", (self.first_name.value, self.last_name.value))
         member = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
 
         if member:
             raise ValueError("Member already exists")
@@ -371,12 +356,8 @@ class ModifyMemberForm(npyscreen.ActionForm):
     def fetch_member(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM members WHERE first_name = ? and last_name = ?", (self.first_name.value, self.last_name.value))
         member = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
 
         if not member:
             raise ValueError("Member not found")
@@ -424,8 +405,6 @@ class ModifyMemberForm(npyscreen.ActionForm):
     def modify_member(self):
         member = self.fetch_member()
 
-        conn, cursor = connect_db()
-
         if self.modified_first_name.value != "":
             cursor.execute("UPDATE members SET first_name = ? WHERE id = ?", (self.modified_first_name.value, member[0]))
 
@@ -460,9 +439,6 @@ class ModifyMemberForm(npyscreen.ActionForm):
             cursor.execute("UPDATE members SET mobile_phone = ? WHERE id = ?", (self.modified_mobile_phone.value, member[0]))
 
         conn.commit()
-
-        cursor.close()
-        conn.close()
 
     def clear_fields(self):
         for widget in self._widgets__:
@@ -511,13 +487,8 @@ class DeleteMemberForm(npyscreen.ActionForm):
     def fetch_member(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
-
         cursor.execute("SELECT * FROM members WHERE first_name = ? and last_name = ?", (self.first_name.value, self.last_name.value))
         member = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
 
         return member
 
@@ -531,11 +502,8 @@ class DeleteMemberForm(npyscreen.ActionForm):
             confirmed = npyscreen.notify_ok_cancel(f"Are you sure you want to delete member {member[1]} {member[2]}", wrap=True)
             
             if confirmed:
-                conn, cursor = connect_db()
                 cursor.execute("DELETE FROM members WHERE id = ?", (member[0]))
                 conn.commit()
-                cursor.close()
-                conn.close()
 
                 self.user_info.value = ""
 
@@ -646,7 +614,6 @@ class AddConsultantForm(npyscreen.ActionForm):
 
     def add_consultant(self):
         self.validate_input()
-        conn, cursor = connect_db()
 
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ?", (self.username.value.lower(),))
         username = cursor.fetchone()
@@ -667,8 +634,6 @@ class AddConsultantForm(npyscreen.ActionForm):
         (self.username.value, hashed_password.decode('utf-8'), self.role, self.first_name.value, self.last_name.value, 0, None, registration_date))
 
         conn.commit()
-        cursor.close()
-        conn.close()
 
     def clear_fields(self):
         for widget in self._widgets__:
@@ -724,12 +689,8 @@ class ModifyConsultantForm(npyscreen.ActionForm):
     def fetch_consultant(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ? and role = ?", (self.username.value.lower(), self.role))
         consultant = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
 
         if not consultant:
             raise ValueError("Consultant not found")
@@ -752,7 +713,6 @@ class ModifyConsultantForm(npyscreen.ActionForm):
 
     def modify_consultant(self):
         consultant = self.fetch_consultant()
-        conn, cursor = connect_db()
 
         if self.values_to_modify() == False:
             raise ValueError("No values to modify")
@@ -768,9 +728,6 @@ class ModifyConsultantForm(npyscreen.ActionForm):
         if self.modified_last_name.value != "":     
             cursor.execute("UPDATE users SET last_name = ? WHERE LOWER(username) = ? and role = ?", (self.modified_last_name.value, consultant[1].lower(), self.role))
             conn.commit()
-
-        cursor.close()
-        conn.close()
 
     def clear_fields(self):
         for widget in self._widgets__:
@@ -810,13 +767,11 @@ class DeleteConsultantForm(npyscreen.ActionForm):
 
     def fetch_consultant(self):
         self.validate_input()
-        conn, cursor = connect_db()
+
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ? and role = ?", (self.username.value.lower(), self.role))
 
         consultant = cursor.fetchone()
 
-        cursor.close()
-        conn.close()
         return consultant
 
     def delete_consultant(self):
@@ -829,11 +784,8 @@ class DeleteConsultantForm(npyscreen.ActionForm):
             confirmed = npyscreen.notify_ok_cancel(f"Are you sure you want to delete consultant: {consultant[4]} {consultant[5]}", wrap=True)
             
             if confirmed:
-                conn, cursor = connect_db()
                 cursor.execute("DELETE FROM users WHERE LOWER(username) = ? and role = ?", (consultant[1].lower(), self.role))
                 conn.commit()
-                cursor.close()
-                conn.close()
 
                 self.user_info.value = ""
 
@@ -889,12 +841,9 @@ class UpdateConsultantPasswordForm(npyscreen.ActionForm):
     def fetch_consultant(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ? and role = ?", (self.username.value.lower(), self.role))
 
         consultant = cursor.fetchone()
-        cursor.close()
-        conn.close()
 
         if not consultant:
             raise ValueError("Consultant not found")
@@ -912,11 +861,8 @@ class UpdateConsultantPasswordForm(npyscreen.ActionForm):
 
         hashed_password = bcrypt.hashpw(self.modified_password.value.encode('utf-8'), bcrypt.gensalt())
 
-        conn, cursor = connect_db()
         cursor.execute("UPDATE users SET password = ?, temporary = ?, expiration = ? WHERE LOWER(username) = ? and role = ?", (hashed_password.decode('utf-8'), 0, None, consultant[1].lower(), self.role))
         conn.commit()
-        cursor.close()
-        conn.close()
 
     def clear_fields(self):
         for widget in self._widgets__:
@@ -961,12 +907,9 @@ class ResetConsultantPasswordForm(npyscreen.ActionForm):
     def fetch_consultant(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ? and role = ?", (self.username.value.lower(), self.role))
 
         consultant = cursor.fetchone()
-        cursor.close()
-        conn.close()
 
         if not consultant:
             raise ValueError("Consultant not found")
@@ -982,11 +925,8 @@ class ResetConsultantPasswordForm(npyscreen.ActionForm):
         expire_date =  datetime.now() + timedelta(minutes=1)
         hashed_password = bcrypt.hashpw(self.modified_password.value.encode('utf-8'), bcrypt.gensalt())
 
-        conn, cursor = connect_db()
         cursor.execute("UPDATE users SET password = ?, temporary = ?, expiration = ?, failed_attempts = ? WHERE LOWER(username) = ? and role = ?", (hashed_password.decode('utf-8'), 1, expire_date, 0, consultant[1].lower(), self.role))
         conn.commit()
-        cursor.close()
-        conn.close()
 
     def clear_fields(self):
         for widget in self._widgets__:
@@ -1042,7 +982,6 @@ class AddAdminForm(npyscreen.ActionForm):
 
     def add_admin(self):
         self.validate_input()
-        conn, cursor = connect_db()
 
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ?", (self.username.value.lower(),))
         username = cursor.fetchone()
@@ -1063,8 +1002,6 @@ class AddAdminForm(npyscreen.ActionForm):
         (self.username.value, hashed_password.decode('utf-8'), self.role, self.first_name.value, self.last_name.value, 0, None, registration_date))
 
         conn.commit()
-        cursor.close()
-        conn.close()
 
     def clear_fields(self):
         for widget in self._widgets__:
@@ -1120,11 +1057,8 @@ class ModifyAdminForm(npyscreen.ActionForm):
     def fetch_admin(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ? and role = ?", (self.username.value.lower(), self.role))
         admin = cursor.fetchone()
-        cursor.close()
-        conn.close()
 
         if not admin:
             raise ValueError("Admin not found")
@@ -1147,7 +1081,6 @@ class ModifyAdminForm(npyscreen.ActionForm):
 
     def modify_admin(self):
         admin = self.fetch_admin()
-        conn, cursor = connect_db()
 
         if self.values_to_modify() == False:
             raise ValueError("No values to modify")
@@ -1163,9 +1096,6 @@ class ModifyAdminForm(npyscreen.ActionForm):
         if self.modified_last_name.value != "":     
             cursor.execute("UPDATE users SET last_name = ? WHERE LOWER(username) = ? and role = ?", (self.modified_last_name.value, admin[1].lower(), self.role))
             conn.commit()
-
-        cursor.close()
-        conn.close()
 
     def clear_fields(self):
         for widget in self._widgets__:
@@ -1206,12 +1136,9 @@ class DeleteAdminForm(npyscreen.ActionForm):
     def fetch_admin(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ? and role = ?", (self.username.value.lower(), self.role))
 
         admin = cursor.fetchone()
-        cursor.close()
-        conn.close()
 
         return admin
 
@@ -1225,11 +1152,8 @@ class DeleteAdminForm(npyscreen.ActionForm):
             confirmed = npyscreen.notify_ok_cancel(f"Are you sure you want to delete admin: {admin[4]} {admin[5]}", wrap=True)
             
             if confirmed:
-                conn, cursor = connect_db()
                 cursor.execute("DELETE FROM users WHERE LOWER(username) = ? and role = ?", (admin[1].lower(), self.role))
                 conn.commit()
-                cursor.close()
-                conn.close()
 
                 self.user_info.value = ""
 
@@ -1285,12 +1209,9 @@ class UpdateAdminsPasswordForm(npyscreen.ActionForm):
     def fetch_admin(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ? and role = ?", (self.username.value.lower(), self.role))
 
         admin = cursor.fetchone()
-        cursor.close()
-        conn.close()
 
         if not admin:
             raise ValueError("Admin not found")
@@ -1308,11 +1229,8 @@ class UpdateAdminsPasswordForm(npyscreen.ActionForm):
 
         hashed_password = bcrypt.hashpw(self.modified_password.value.encode('utf-8'), bcrypt.gensalt())
 
-        conn, cursor = connect_db()
         cursor.execute("UPDATE users SET password = ?, temporary = ?, expiration = ? WHERE LOWER(username) = ? and role = ?", (hashed_password.decode('utf-8'), 0, None, admin[1].lower(), self.role))
         conn.commit()
-        cursor.close()
-        conn.close()
 
     def clear_fields(self):
         for widget in self._widgets__:
@@ -1357,12 +1275,9 @@ class ResetAdminsPasswordForm(npyscreen.ActionForm):
     def fetch_admin(self):
         self.validate_input()
 
-        conn, cursor = connect_db()
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ? and role = ?", (self.username.value.lower(), self.role))
 
         admin = cursor.fetchone()
-        cursor.close()
-        conn.close()
 
         if not admin:
             raise ValueError("Admin not found")
@@ -1380,8 +1295,6 @@ class ResetAdminsPasswordForm(npyscreen.ActionForm):
 
         cursor.execute("UPDATE users SET password = ?, temporary = ?, expiration = ?, failed_attempts = ? WHERE LOWER(username) = ? and role = ?", (hashed_password.decode('utf-8'), 1, expire_date, 0, admin[1].lower(), self.role))
         conn.commit()
-        cursor.close()
-        conn.close()
 
     def clear_fields(self):
         for widget in self._widgets__:
@@ -1423,11 +1336,8 @@ class UserOverviewScreen(npyscreen.Form):
 
 
     def beforeEditing(self):
-        conn, cursor = connect_db()
         cursor.execute('SELECT * FROM users')
         users = cursor.fetchall()
-        cursor.close()
-        conn.close()
         
         self.log_widget.values.clear()
         self.log_widget.values.append(f"{'':<25} {'':<24} {'':<21} {'':<14}")
@@ -1961,19 +1871,12 @@ class App(npyscreen.NPSAppManaged):
         self.addForm('BACKUP', BackupScreen, name='Backup')
         self.addForm('LOGS', LogScreen, name='Logs')
 
-def connect_db():
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    return conn, cursor
-
-
 if __name__ == '__main__':
     if not os.path.exists(data_directory):
         os.makedirs(data_directory)
 
     db_path = os.path.join(data_directory, db_name)
 
-    conn, cursor = connect_db()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
@@ -2039,9 +1942,6 @@ if __name__ == '__main__':
     if not os.path.exists(key_path):
         with open(key_path, 'wb') as key_file:
             key_file.write(key)
-    
-    cursor.close()
-    conn.close()
 
     app = App()
     app.run()
