@@ -19,6 +19,26 @@ key_path = os.path.join(data_directory, "key_file.key")
 
 # --------------------------------------------------------- Login ----------------------------------------------------------------
 
+class Logger:
+    @staticmethod
+    def log(log_line):
+        with open(log_path, 'a') as log_file:
+            log_file.write(base64.b64encode(Logger.encrypt_data(log_line)).decode() + "\n")
+            log_file.flush()
+
+    @staticmethod
+    def encrypt_data(string_to_encrypt):
+        with open(key_path, 'rb') as key_file:
+            key = key_file.read()
+
+        fernet = Fernet(key)
+
+        encoded_string = string_to_encrypt.encode()
+        encrypted_data = fernet.encrypt(encoded_string)
+
+        return encrypted_data
+
+
 class LoginForm(npyscreen.ActionForm):
     def create(self):
         self.username = self.add(npyscreen.TitleText, name='Username:')
@@ -71,7 +91,7 @@ class LoginForm(npyscreen.ActionForm):
         current_date = datetime.now().date()
         current_time = datetime.now().strftime('%H:%M')
 
-        suspicious = "Yes" if user[9] > 3 else "No"
+        suspicious = "Yes" if int(user[9]) >= 3 else "No"
 
         if not bcrypt.checkpw(self.password.value.encode('utf-8'), user[2].encode('utf8')):
             attempts = int(self.fetch_login_attempts()) + 1
@@ -82,35 +102,26 @@ class LoginForm(npyscreen.ActionForm):
             cursor.close()
             conn.close()
 
-            with open(log_path, 'a') as log_file:
-                log_line = f"{current_date}, {current_time}, {user[1]}, Failed login,  , {suspicious}"
-                log_file.write(base64.b64encode(self.encrypt_data(log_line)).decode() + "\n")
-                log_file.flush()
+            log_line = f"{current_date}, {current_time}, {user[1]}, Failed login,  , {suspicious}"
+            Logger.log(log_line)
 
             raise ValueError("Invalid credentials")
+
+        if int(user[9]) >= 3:
+            log_line = f"{current_date}, {current_time}, {user[1]}, Account blocked,  , {suspicious}"
+            Logger.log(log_line)
+
+            raise ValueError("Account blocked")
 
         if user[6] == 1:
             date_format = "%Y-%m-%d %H:%M:%S.%f"
             expire_date = datetime.strptime(user[7], date_format)
 
             if datetime.now() > expire_date:
-                with open(log_path, 'a') as log_file:
-                    log_line = f"{current_date}, {current_time}, {user[1]}, Expired password login,  , {suspicious}"
-                    log_file.write(base64.b64encode(self.encrypt_data(log_line)).decode() + "\n")
-                    log_file.flush()
+                log_line = f"{current_date}, {current_time}, {user[1]}, Expired password login,  , {suspicious}"
+                Logger.log(log_line)
 
                 raise ValueError("Temporary password expired!")
-
-    def encrypt_data(self, string_to_encrypt):
-        with open(key_path, 'rb') as key_file:
-            key = key_file.read()
-
-        fernet = Fernet(key)
-
-        encoded_string = string_to_encrypt.encode()
-        encrypted_data = fernet.encrypt(encoded_string)
-
-        return encrypted_data
 
     def clear_fields(self):
         for widget in self._widgets__:
@@ -129,10 +140,11 @@ class LoginForm(npyscreen.ActionForm):
 
             suspicious = "Yes" if user[9] > 3 else "No"
 
-            with open(log_path, 'a') as log_file:
-                log_line = f"{current_date}, {current_time}, {user[1]}, Succesfull login,  , {suspicious}"
-                log_file.write(base64.b64encode(self.encrypt_data(log_line)).decode() + "\n")
-                log_file.flush()
+            log_line = f"{current_date}, {current_time}, {user[1]}, Succesfull login,  , {suspicious}"
+            Logger.log(log_line)
+
+            cursor.execute('INSERT INTO active_user (username, role) VALUES (?, ?)', (user[1], user[3]))
+            conn.commit()
 
             if role == "CONSULTANT":
                 self.clear_fields()
@@ -148,6 +160,10 @@ class LoginForm(npyscreen.ActionForm):
             self.clear_fields()
 
     def on_cancel(self):
+        cursor.execute('DELETE FROM active_user;')
+        conn.commit()
+        
+        conn.close()
         self.parentApp.switchForm(None)
 
 # --------------------------------------------------------- Member Actions ----------------------------------------------------------------
@@ -509,7 +525,7 @@ class DeleteMemberForm(npyscreen.ActionForm):
         try:
             member = self.fetch_member()
 
-            if not member:
+            if not admin:
                 raise ValueError("No member to delete")
 
             confirmed = npyscreen.notify_ok_cancel(f"Are you sure you want to delete member {member[1]} {member[2]}", wrap=True)
@@ -794,7 +810,6 @@ class DeleteConsultantForm(npyscreen.ActionForm):
 
     def fetch_consultant(self):
         self.validate_input()
-             
         conn, cursor = connect_db()
         cursor.execute("SELECT * FROM users WHERE LOWER(username) = ? and role = ?", (self.username.value.lower(), self.role))
 
@@ -802,7 +817,6 @@ class DeleteConsultantForm(npyscreen.ActionForm):
 
         cursor.close()
         conn.close()
-
         return consultant
 
     def delete_consultant(self):
@@ -969,7 +983,7 @@ class ResetConsultantPasswordForm(npyscreen.ActionForm):
         hashed_password = bcrypt.hashpw(self.modified_password.value.encode('utf-8'), bcrypt.gensalt())
 
         conn, cursor = connect_db()
-        cursor.execute("UPDATE users SET password = ?, temporary = ?, expiration = ? WHERE LOWER(username) = ? and role = ?", (hashed_password.decode('utf-8'), 1, expire_date, consultant[1].lower(), self.role))
+        cursor.execute("UPDATE users SET password = ?, temporary = ?, expiration = ?, failed_attempts = ? WHERE LOWER(username) = ? and role = ?", (hashed_password.decode('utf-8'), 1, expire_date, 0, consultant[1].lower(), self.role))
         conn.commit()
         cursor.close()
         conn.close()
@@ -1364,8 +1378,7 @@ class ResetAdminsPasswordForm(npyscreen.ActionForm):
         expire_date =  datetime.now() + timedelta(minutes=1)
         hashed_password = bcrypt.hashpw(self.modified_password.value.encode('utf-8'), bcrypt.gensalt())
 
-        conn, cursor = connect_db()
-        cursor.execute("UPDATE users SET password = ?, temporary = ?, expiration = ? WHERE LOWER(username) = ? and role = ?", (hashed_password.decode('utf-8'), 1, expire_date, admin[1].lower(), self.role))
+        cursor.execute("UPDATE users SET password = ?, temporary = ?, expiration = ?, failed_attempts = ? WHERE LOWER(username) = ? and role = ?", (hashed_password.decode('utf-8'), 1, expire_date, 0, admin[1].lower(), self.role))
         conn.commit()
         cursor.close()
         conn.close()
@@ -1691,13 +1704,19 @@ class LogScreen(npyscreen.Form):
 # ---------------------------------------------------------- Menus -------------------------------------------------------------------
 
 class MembersActions(npyscreen.FormBaseNew):
+    def beforeEditing(self):
+        cursor.execute("SELECT * FROM active_user;")
+        user = cursor.fetchone()
+
+        self.add(npyscreen.MultiLineEdit, editable=False, value=f"Username: {user[1]}, Role: {user[2]}", rely = 2, relx= 4)
+
     def create(self):
-        self.add(npyscreen.ButtonPress, name="New member", when_pressed_function=self.render_new_consultant_screen)
+        self.add(npyscreen.ButtonPress, name="New member", when_pressed_function=self.render_new_consultant_screen, rely = 4)
         self.add(npyscreen.ButtonPress, name="Modify member", when_pressed_function=self.render_modify_consultant_screen)
         self.add(npyscreen.ButtonPress, name="Delete member", when_pressed_function=self.render_delete_consultant_screen)
         self.add(npyscreen.ButtonPress, name="Search member", when_pressed_function=self.render_reset_password_screen)
 
-        self.add(npyscreen.ButtonPress, name="Back to main", when_pressed_function=self.switch_back_to_main_menu, rely=7, relx=2)
+        self.add(npyscreen.ButtonPress, name="Back to main", when_pressed_function=self.switch_back_to_main_menu, rely=10, relx=2)
 
     def render_new_consultant_screen(self):
         self.parentApp.switchForm("NEW MEMBER")
@@ -1715,12 +1734,18 @@ class MembersActions(npyscreen.FormBaseNew):
         self.parentApp.switchFormPrevious()
 
 class ConsultantsActions(npyscreen.FormBaseNew):
+    def beforeEditing(self):
+        cursor.execute("SELECT * FROM active_user;")
+        user = cursor.fetchone()
+
+        self.add(npyscreen.MultiLineEdit, editable=False, value=f"Username: {user[1]}, Role: {user[2]}", rely = 2, relx= 4)
+
     def create(self):
-        self.add(npyscreen.ButtonPress, name="New consultant", when_pressed_function=self.render_new_consultant_screen)
+        self.add(npyscreen.ButtonPress, name="New consultant", when_pressed_function=self.render_new_consultant_screen, rely = 4)
         self.add(npyscreen.ButtonPress, name="Modify consultant", when_pressed_function=self.render_modify_consultant_screen)
         self.add(npyscreen.ButtonPress, name="Delete consultant", when_pressed_function=self.render_delete_consultant_screen)
         self.add(npyscreen.ButtonPress, name="Reset password", when_pressed_function=self.render_reset_password_screen)
-        self.add(npyscreen.ButtonPress, name="Back to main", when_pressed_function=self.switch_back_to_main_menu, rely=7, relx=2)
+        self.add(npyscreen.ButtonPress, name="Back to main", when_pressed_function=self.switch_back_to_main_menu, rely=10, relx=2)
 
     def render_new_consultant_screen(self):
         self.parentApp.switchForm("NEW CONSULTANT")
@@ -1738,13 +1763,19 @@ class ConsultantsActions(npyscreen.FormBaseNew):
         self.parentApp.switchFormPrevious()
 
 class ConsultantsMenu(npyscreen.FormBaseNew):
+    def beforeEditing(self):
+        cursor.execute("SELECT * FROM active_user;")
+        user = cursor.fetchone()
+
+        self.add(npyscreen.MultiLineEdit, editable=False, value=f"Username: {user[1]}, Role: {user[2]}", rely = 2, relx= 4)
+
     def create(self):
-        self.add(npyscreen.ButtonPress, name="Add member", when_pressed_function=self.render_add_member_screen)
+        self.add(npyscreen.ButtonPress, name="Add member", when_pressed_function=self.render_add_member_screen, rely= 4)
         self.add(npyscreen.ButtonPress, name="Modify member", when_pressed_function=self.render_modify_member_screen)
         self.add(npyscreen.ButtonPress, name="Search member", when_pressed_function=self.render_search_member_screen)
         self.add(npyscreen.ButtonPress, name="Update password", when_pressed_function=self.render_update_consultants_password_screen)
 
-        self.add(npyscreen.ButtonPress, name="Logout", when_pressed_function=self.switch_back_to_main_menu, rely=7, relx=2)
+        self.add(npyscreen.ButtonPress, name="Logout", when_pressed_function=self.switch_back_to_main_menu, rely=10, relx=2)
 
     def render_add_member_screen(self):
         self.parentApp.switchForm("NEW MEMBER")
@@ -1759,15 +1790,24 @@ class ConsultantsMenu(npyscreen.FormBaseNew):
         self.parentApp.switchForm("UPDATE CONSULTANT PASSWORD")
 
     def switch_back_to_main_menu(self):
+        cursor.execute('DELETE FROM active_user;')
+        conn.commit()
+
         self.parentApp.switchForm("MAIN")
 
 class SystemAdminsActions(npyscreen.FormBaseNew):
+    def beforeEditing(self):
+        cursor.execute("SELECT * FROM active_user;")
+        user = cursor.fetchone()
+
+        self.add(npyscreen.MultiLineEdit, editable=False, value=f"Username: {user[1]}, Role: {user[2]}", rely = 2, relx= 4)
+
     def create(self):
-        self.add(npyscreen.ButtonPress, name="New admin", when_pressed_function=self.render_new_admin_screen)
+        self.add(npyscreen.ButtonPress, name="New admin", when_pressed_function=self.render_new_admin_screen, rely=4)
         self.add(npyscreen.ButtonPress, name="Modify admin", when_pressed_function=self.render_modify_admin_screen)
         self.add(npyscreen.ButtonPress, name="Delete admin", when_pressed_function=self.render_delete_admnin_screen)
         self.add(npyscreen.ButtonPress, name="Reset password", when_pressed_function=self.render_reset_password_screen)
-        self.add(npyscreen.ButtonPress, name="Back to main", when_pressed_function=self.switch_back_to_main_menu, rely=7, relx=2)
+        self.add(npyscreen.ButtonPress, name="Back to main", when_pressed_function=self.switch_back_to_main_menu, rely=10, relx=2)
 
     def render_new_admin_screen(self):
         self.parentApp.switchForm("NEW ADMIN")
@@ -1785,53 +1825,52 @@ class SystemAdminsActions(npyscreen.FormBaseNew):
         self.parentApp.switchFormPrevious()
 
 class SystemAdminsMenu(npyscreen.FormBaseNew):
+    def beforeEditing(self):
+        cursor.execute("SELECT * FROM active_user;")
+        user = cursor.fetchone()
+
+        self.add(npyscreen.MultiLineEdit, editable=False, value=f"Username: {user[1]}, Role: {user[2]}", rely = 2, relx= 4)
+
     def create(self):
-        self.add(npyscreen.ButtonPress, name="Users", when_pressed_function=self.render_users_screen)
-        self.add(npyscreen.ButtonPress, name="Members", when_pressed_function=self.render_modify_consultant_screen)
-        self.add(npyscreen.ButtonPress, name="Consultant", when_pressed_function=self.render_consultants_screen)
+        self.add(npyscreen.ButtonPress, name="Members", when_pressed_function=self.render_members_screen, rely= 4)
+        self.add(npyscreen.ButtonPress, name="Consultants", when_pressed_function=self.render_consultants_screen)
         self.add(npyscreen.ButtonPress, name="Update password", when_pressed_function=self.render_update_system_admins_password_screen)
-        self.add(npyscreen.ButtonPress, name="Restore", when_pressed_function=self.render_restore_screen)
-        self.add(npyscreen.ButtonPress, name="Backup", when_pressed_function=self.render_backup_screen)
-        self.add(npyscreen.ButtonPress, name="Logs", when_pressed_function=self.render_logs_screen)
+        self.add(npyscreen.ButtonPress, name="System", when_pressed_function=self.render_system_actions_screen)
 
         self.add(npyscreen.ButtonPress, name="Logout", when_pressed_function=self.switch_back_to_main_menu, rely=10)
 
-    def render_users_screen(self):
-        self.parentApp.switchForm("LIST USERS")
+    def render_members_screen(self):
+        self.parentApp.switchForm("MEMBERS ACTIONS")
 
     def render_consultants_screen(self):
         self.parentApp.switchForm("CONSULTANTS ACTIONS")
 
-    def render_restore_screen(self):
-        self.parentApp.switchForm("RESTORE")
-
-    def render_backup_screen(self):
-        self.parentApp.switchForm("RESTORE")
-
-    def render_logs_screen(self):
-        self.parentApp.switchForm("LOGS")
-
-    def render_modify_consultant_screen(self):
-        self.parentApp.switchForm("MODIFY CONSULTANT")
-
-    def render_delete_consultant_screen(self):
-        self.parentApp.switchForm("DELETE CONSULTANT")
-
-
     def render_update_system_admins_password_screen(self):
         self.parentApp.switchForm("UPDATE SYSTEM ADMINS PASSWORD")
 
+    def render_system_actions_screen(self):
+        self.parentApp.switchForm("SYSTEM ACTIONS")
+
     def switch_back_to_main_menu(self):
+        cursor.execute('DELETE FROM active_user;')
+        conn.commit()
+
         self.parentApp.switchForm("MAIN")
 
 class SystemActions(npyscreen.FormBaseNew):
+    def beforeEditing(self):
+        cursor.execute("SELECT * FROM active_user;")
+        user = cursor.fetchone()
+
+        self.add(npyscreen.MultiLineEdit, editable=False, value=f"Username: {user[1]}, Role: {user[2]}", rely = 2, relx= 4)
+
     def create(self):
-        self.add(npyscreen.ButtonPress, name="Users", when_pressed_function=self.render_users_screen)
+        self.add(npyscreen.ButtonPress, name="Users", when_pressed_function=self.render_users_screen, rely= 4)
         self.add(npyscreen.ButtonPress, name="Restore", when_pressed_function=self.render_restore_screen)
         self.add(npyscreen.ButtonPress, name="Backup", when_pressed_function=self.render_backup_screen)
         self.add(npyscreen.ButtonPress, name="Logs", when_pressed_function=self.render_logs_screen)
 
-        self.add(npyscreen.ButtonPress, name="Back to main", when_pressed_function=self.switch_back_to_main_menu, rely=8)
+        self.add(npyscreen.ButtonPress, name="Back to main", when_pressed_function=self.switch_back_to_main_menu, rely=10)
 
     def render_users_screen(self):
         self.parentApp.switchForm("LIST USERS")
@@ -1849,13 +1888,19 @@ class SystemActions(npyscreen.FormBaseNew):
         self.parentApp.switchFormPrevious()
 
 class SuperAdminsMenu(npyscreen.FormBaseNew):
+    def beforeEditing(self):
+        cursor.execute("SELECT * FROM active_user;")
+        user = cursor.fetchone()
+
+        self.add(npyscreen.MultiLineEdit, editable=False, value=f"Username: {user[1]}, Role: {user[2]}", rely = 2, relx= 4)
+
     def create(self):
-        self.add(npyscreen.ButtonPress, name="Members", when_pressed_function=self.render_members_screen)
+        self.add(npyscreen.ButtonPress, name="Members", when_pressed_function=self.render_members_screen, rely= 4)
         self.add(npyscreen.ButtonPress, name="Consultants", when_pressed_function=self.render_consultants_screen)
         self.add(npyscreen.ButtonPress, name="System admins", when_pressed_function=self.render_system_admnins_screen)
         self.add(npyscreen.ButtonPress, name="System", when_pressed_function=self.render_system_actions_screen)
 
-        self.add(npyscreen.ButtonPress, name="Logout", when_pressed_function=self.switch_back_to_main_menu, rely=8)
+        self.add(npyscreen.ButtonPress, name="Logout", when_pressed_function=self.switch_back_to_main_menu, rely=10)
 
     def render_members_screen(self):
         self.parentApp.switchForm("MEMBERS ACTIONS")
@@ -1870,7 +1915,11 @@ class SuperAdminsMenu(npyscreen.FormBaseNew):
         self.parentApp.switchForm("SYSTEM ACTIONS")
 
     def switch_back_to_main_menu(self):
+        cursor.execute('DELETE FROM active_user;')
+        conn.commit()
+
         self.parentApp.switchForm("MAIN")
+
 # ---------------------------------------------------------- Menus -------------------------------------------------------------------
 
 class App(npyscreen.NPSAppManaged):
@@ -1902,7 +1951,8 @@ class App(npyscreen.NPSAppManaged):
 
         self.addForm('NEW ADMIN', AddAdminForm, name='New admin')
         self.addForm('MODIFY ADMIN', ModifyAdminForm, name='Modify admin')
-        self.addForm('DELETE ADMIN', DeleteAdminForm, name='Delete admin')  
+        self.addForm('DELETE ADMIN', DeleteAdminForm, name='Delete admin')
+        self.addForm('UPDATE SYSTEM ADMINS PASSWORD', UpdateAdminsPasswordForm, name='Update admin password')
         self.addForm('RESET ADMIN PASSWORD', ResetAdminsPasswordForm, name='Reset admin password')
 
         # Screens
@@ -1924,6 +1974,9 @@ if __name__ == '__main__':
     db_path = os.path.join(data_directory, db_name)
 
     conn, cursor = connect_db()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
     cursor.execute(
         '''CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
@@ -1956,6 +2009,14 @@ if __name__ == '__main__':
         )'''
     )
 
+    cursor.execute(
+        '''CREATE TABLE IF NOT EXISTS active_user (
+                id INTEGER PRIMARY KEY,
+                username TEXT NOT NULL,
+                role TEXT NOT NULL
+        )'''
+    )
+
     cursor.execute("SELECT * FROM users WHERE username = ? and role = ?", ("super_admin", "SUPER ADMIN"))
     super_Admin = cursor.fetchone()
 
@@ -1965,6 +2026,9 @@ if __name__ == '__main__':
 
         cursor.execute('INSERT INTO users (username, password, role, first_name, last_name, temporary, expiration, registration_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         ("super_admin", hashed_password.decode('utf-8'), "SUPER ADMIN", "", "", 0, None, registration_date))
+
+    cursor.execute('DELETE FROM active_user;')
+    conn.commit()
 
     if not os.path.exists(log_path):
         with open(log_path, "w") as file:
